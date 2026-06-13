@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oneiros"
+version = "0.1.0"
+description = "JEPA-style latent world model with an agentic MCP planning interface"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Marius Castillo" }]
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.26",
+    "mcp>=1.0",
+    "pillow>=10.0",
+    "imageio>=2.30",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+oneiros-train = "oneiros.train:main"
+oneiros-demo = "oneiros.demo_agent:main"
+oneiros-mcp = "oneiros.mcp_server:main"
+
+[tool.setuptools]
+packages = ["oneiros"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
