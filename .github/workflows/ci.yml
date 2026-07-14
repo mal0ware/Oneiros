@@ -21,8 +21,11 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install project + dev dependencies
+        # `pip install -e .` puts the oneiros package itself on the path —
+        # without it every test module fails collection with
+        # ModuleNotFoundError (first real CI run, 2026-07-14).
         run: |
-          pip install numpy "mcp[cli]" pillow imageio matplotlib
+          pip install -e .
           pip install ruff pytest
 
       - name: Lint (ruff)
