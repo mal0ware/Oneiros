@@ -1,5 +1,9 @@
 # Oneiros
 
+[![CI](https://github.com/mal0ware/Oneiros/actions/workflows/ci.yml/badge.svg)](https://github.com/mal0ware/Oneiros/actions/workflows/ci.yml)
+
+**Status:** complete research artifact — results verified (see the three honesty gates below); image-based perception is documented as future work.
+
 **A JEPA-style latent world model that an agent calls as a tool — over MCP — to plan.**
 
 Oneiros is a small, CPU-only research artifact at the intersection of *agentic
