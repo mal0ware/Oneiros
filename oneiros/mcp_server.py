@@ -26,7 +26,10 @@ mcp = FastMCP("oneiros")
 
 # Lazily constructed singletons so importing this module is cheap and does not
 # require a checkpoint to exist (the tool-list dump in CI must import cleanly).
-_STATE: dict[str, object] = {"model": None, "planner": None, "env": None}
+# Environments are keyed by session id so independent agent sessions cannot
+# clobber each other's episode state through the shared server process.
+_STATE: dict[str, object] = {"model": None, "planner": None}
+_ENVS: dict[str, PointMass] = {}
 
 
 def _get_model():
@@ -41,12 +44,12 @@ def _get_planner() -> LatentMPCPlanner:
     return _STATE["planner"]  # type: ignore[return-value]
 
 
-def _get_env() -> PointMass:
-    if _STATE["env"] is None:
+def _get_env(session: str = "default") -> PointMass:
+    if session not in _ENVS:
         env = PointMass(seed=0)
         env.reset(seed=0)
-        _STATE["env"] = env
-    return _STATE["env"]  # type: ignore[return-value]
+        _ENVS[session] = env
+    return _ENVS[session]
 
 
 @mcp.tool()
@@ -102,28 +105,86 @@ def plan_to_goal(current_obs: list[float], goal_obs: list[float]) -> dict:
 
 
 @mcp.tool()
-def reset_env(seed: int = 0) -> dict:
+def plan_trajectory(current_obs: list[float], goal_obs: list[float]) -> dict:
+    """Plan a full action sequence toward a goal and return the imagined plan.
+
+    Unlike plan_to_goal (which returns only the next action for
+    receding-horizon control), this returns the entire best action sequence
+    the latent MPC search found, plus the imagined latent trajectory those
+    actions produce under the world model. Useful when an agent wants to
+    inspect or execute the model's whole plan open-loop.
+    """
+    planner = _get_planner()
+    seq = planner.plan_sequence(
+        np.asarray(current_obs, dtype=np.float32),
+        np.asarray(goal_obs, dtype=np.float32),
+    )
+    model = _get_model()
+    import torch
+
+    with torch.no_grad():
+        z = model.encode(torch.tensor([current_obs], dtype=torch.float32)).squeeze(0)
+        latents = []
+        for a in seq:
+            z = model.predict(
+                z.unsqueeze(0), torch.tensor([a], dtype=torch.float32)
+            ).squeeze(0)
+            latents.append(z.tolist())
+    return {
+        "actions": [[float(x) for x in a] for a in seq],
+        "imagined_latents": latents,
+        "horizon": len(seq),
+    }
+
+
+@mcp.tool()
+def model_info() -> dict:
+    """Describe the loaded world model: observation mode, dims, and metrics.
+
+    Surfaces the checkpoint's training metrics (including the honesty-gate
+    numbers: predictor-vs-identity MSE ratio and latent std) so an agent can
+    inspect what it is planning with.
+    """
+    model = _get_model()
+    import torch
+
+    ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=False)
+    return {
+        "obs_mode": model.cfg.obs_mode,
+        "latent_dim": model.cfg.latent_dim,
+        "action_dim": model.cfg.action_dim,
+        "metrics": {k: float(v) for k, v in ckpt.get("metrics", {}).items()},
+        "env_config": ckpt.get("env_config"),
+    }
+
+
+@mcp.tool()
+def reset_env(seed: int = 0, session: str = "default") -> dict:
     """Reset the point-mass environment to a deterministic start for the given seed.
 
     Returns the initial observation, the agent state, and the goal position.
+    Pass a distinct ``session`` id to hold an independent environment --
+    concurrent agent sessions do not share episode state.
     """
-    env = _get_env()
+    env = _get_env(session)
     env.reset(seed=seed)
     return {
         "observation": env.state_obs().tolist(),
         "state": env.state.tolist(),
         "goal": env.goal.tolist(),
+        "session": session,
     }
 
 
 @mcp.tool()
-def step_env(action: list[float]) -> dict:
+def step_env(action: list[float], session: str = "default") -> dict:
     """Apply a 2D acceleration action to the environment and advance one timestep.
 
     Returns the new observation, reward (negative distance to goal), a done flag
-    (agent reached the goal), and the distance to the goal.
+    (agent reached the goal), and the distance to the goal. ``session`` selects
+    which independent environment to step (see reset_env).
     """
-    env = _get_env()
+    env = _get_env(session)
     state, reward, done, info = env.step(np.asarray(action, dtype=np.float32))
     return {
         "observation": env.state_obs().tolist(),
@@ -131,6 +192,7 @@ def step_env(action: list[float]) -> dict:
         "reward": float(reward),
         "done": bool(done),
         "dist": float(info["dist"]),
+        "session": session,
     }
 
 

@@ -68,6 +68,18 @@ class LatentMPCPlanner:
     @torch.no_grad()
     def plan(self, current_obs: np.ndarray, goal_obs: np.ndarray) -> np.ndarray:
         """Return the first action of the best action sequence found."""
+        return self.plan_sequence(current_obs, goal_obs)[0]
+
+    @torch.no_grad()
+    def plan_sequence(
+        self, current_obs: np.ndarray, goal_obs: np.ndarray
+    ) -> np.ndarray:
+        """Return the full best action sequence, shape ``(horizon, action_dim)``.
+
+        Receding-horizon callers use only the first action (``plan``); the
+        full sequence is exposed so an agent can inspect or execute the
+        model's entire imagined plan (the MCP ``plan_trajectory`` tool).
+        """
         z0 = self._encode(current_obs)
         z_goal = self._encode(goal_obs)
         cfg = self.cfg
@@ -77,13 +89,13 @@ class LatentMPCPlanner:
             actions = self._sample_uniform(cfg.n_samples, cfg.horizon, a_dim)
             costs = self._score_sequences(z0, z_goal, actions)
             best = int(torch.argmin(costs))
-            return actions[best, 0, :].cpu().numpy()
+            return actions[best].cpu().numpy()
 
         # cross-entropy method: iteratively refit a diagonal Gaussian to elites.
         mean = np.zeros((cfg.horizon, a_dim), dtype=np.float32)
         std = np.full((cfg.horizon, a_dim), cfg.max_accel * 0.7, dtype=np.float32)
         n_elite = max(4, int(cfg.n_samples * cfg.cem_elite_frac))
-        best_first = np.zeros(a_dim, dtype=np.float32)
+        best_seq = np.zeros((cfg.horizon, a_dim), dtype=np.float32)
         for _ in range(cfg.cem_iters):
             samples = self._rng.normal(
                 mean[None], std[None], size=(cfg.n_samples, cfg.horizon, a_dim)
@@ -95,8 +107,8 @@ class LatentMPCPlanner:
             elites = samples[elite_idx]
             mean = elites.mean(axis=0)
             std = elites.std(axis=0) + 1e-3
-            best_first = elites[0, 0, :]
-        return best_first.astype(np.float32)
+            best_seq = elites[0]
+        return best_seq.astype(np.float32)
 
     def _sample_uniform(self, n: int, h: int, a_dim: int) -> torch.Tensor:
         s = self._rng.uniform(

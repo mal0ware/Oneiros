@@ -26,11 +26,31 @@ class PointMassConfig:
     max_accel: float = 1.0  # per-axis acceleration clip
     max_speed: float = 2.0  # per-axis speed clip (keeps dynamics bounded)
     friction: float = 0.10  # fraction of velocity removed per step
+    quad_drag: float = 0.0  # speed-proportional drag: damping grows with |v|
     restitution: float = 0.8  # wall bounce energy retention
     img_size: int = 32
     blob_radius: float = 0.09  # radius (world units) of the rendered agent blob
     goal_radius: float = 0.07  # radius (world units) of the rendered goal marker
     radius: float = 0.04  # collision radius of the point mass
+
+    @classmethod
+    def swift(cls) -> PointMassConfig:
+        """The 'swift' preset: large per-step motion + non-linear drag.
+
+        Two deliberate changes versus the default:
+
+        * ``dt`` and ``max_accel`` are raised so the agent moves several
+          pixels per rendered frame. On the default config consecutive
+          32x32 frames are nearly identical, so "predict no change" is
+          already an excellent image predictor and there is no margin to
+          demonstrate learned dynamics (the README's documented
+          limitation). Here the identity baseline is genuinely bad.
+        * ``quad_drag`` makes damping grow with speed, so the dynamics
+          are non-linear in the state (on top of the already non-linear
+          wall bounces) and a fitted linear model is no longer the right
+          hypothesis class.
+        """
+        return cls(dt=0.25, max_accel=1.5, friction=0.05, quad_drag=0.15)
 
 
 @dataclass
@@ -86,8 +106,16 @@ class PointMass:
 
         x, y, vx, vy = self.state
         # semi-implicit Euler: integrate velocity first, then position.
-        vx = (vx + a[0] * c.dt) * (1.0 - c.friction)
-        vy = (vy + a[1] * c.dt) * (1.0 - c.friction)
+        vx = vx + a[0] * c.dt
+        vy = vy + a[1] * c.dt
+        # damping: constant friction plus (optionally) speed-proportional
+        # drag. With quad_drag == 0 this reduces exactly to the original
+        # (1 - friction) factor, so the committed default-config
+        # checkpoint and its gates are unaffected.
+        speed = float(np.hypot(vx, vy))
+        damp = max(0.0, 1.0 - c.friction - c.quad_drag * speed)
+        vx *= damp
+        vy *= damp
         vx = float(np.clip(vx, -c.max_speed, c.max_speed))
         vy = float(np.clip(vy, -c.max_speed, c.max_speed))
 

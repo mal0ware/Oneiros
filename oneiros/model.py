@@ -176,20 +176,37 @@ def jepa_loss(
     obs_next: torch.Tensor,
     var_weight: float,
     cov_weight: float,
+    delta_var_weight: float = 0.0,
+    delta_target_std: float = 0.3,
 ) -> tuple[torch.Tensor, dict]:
-    """Compute the full JEPA training loss and a dict of component scalars."""
+    """Compute the full JEPA training loss and a dict of component scalars.
+
+    ``delta_var_weight`` guards against *temporal* collapse: a convolutional
+    encoder can minimize the prediction loss by mapping consecutive frames to
+    nearly identical latents (the dataset-wide variance penalty does not
+    forbid this -- latents can vary across episodes while barely moving
+    within one). Hinging the per-dim std of the one-step latent delta
+    ``z_{t+1} - z_t`` toward ``delta_target_std`` forces real motion into
+    the representation; the predictor then has to model that motion to keep
+    the prediction loss low, so this cannot be gamed into a free pass of
+    the identity-baseline gate. Off (0.0) by default -- the committed
+    vector model predates it and does not need it.
+    """
     z_t = model.encode(obs_t)
     z_next_target = model.encode_target(obs_next)  # stop-grad EMA target
+    z_next_online = model.encode(obs_next)
     z_hat = model.predict(z_t, action)
 
     pred = F.mse_loss(z_hat, z_next_target)
-    var = variance_loss(z_t) + variance_loss(model.encode(obs_next))
+    var = variance_loss(z_t) + variance_loss(z_next_online)
     cov = covariance_loss(z_t)
+    delta_var = variance_loss(z_next_online - z_t, target_std=delta_target_std)
 
-    total = pred + var_weight * var + cov_weight * cov
+    total = pred + var_weight * var + cov_weight * cov + delta_var_weight * delta_var
     return total, {
         "pred": float(pred.detach()),
         "var": float(var.detach()),
         "cov": float(cov.detach()),
+        "delta_var": float(delta_var.detach()),
         "total": float(total.detach()),
     }

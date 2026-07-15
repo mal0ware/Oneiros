@@ -14,14 +14,21 @@ from __future__ import annotations
 import argparse
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from .data import collect_rollouts
+from .env import PointMassConfig
 from .model import JEPA, ModelConfig, jepa_loss
 
-CHECKPOINT_PATH = "oneiros/checkpoint.pt"
+# Resolved relative to the package so the console scripts (oneiros-mcp,
+# oneiros-demo) and the MCP server work from any working directory, not
+# just the repo root.
+_PKG_DIR = Path(__file__).resolve().parent
+CHECKPOINT_PATH = str(_PKG_DIR / "checkpoint.pt")
+IMAGE_CHECKPOINT_PATH = str(_PKG_DIR / "checkpoint_image.pt")
 
 
 def set_seed(seed: int) -> None:
@@ -43,24 +50,36 @@ def train(
     lr: float = 1e-3,
     var_weight: float = 25.0,
     cov_weight: float = 1.0,
+    delta_var_weight: float = 0.0,
     n_episodes: int = 200,
     horizon: int = 50,
     seed: int = 0,
     checkpoint_path: str = CHECKPOINT_PATH,
+    env_config: PointMassConfig | None = None,
+    frame_stack: int = 1,
     verbose: bool = True,
 ) -> dict:
     """Train the model and save a checkpoint. Returns a metrics dict."""
     set_seed(seed)
-    torch.set_num_threads(max(1, torch.get_num_threads()))
 
-    data = collect_rollouts(n_episodes=n_episodes, horizon=horizon, seed=seed)
+    data = collect_rollouts(
+        n_episodes=n_episodes,
+        horizon=horizon,
+        seed=seed,
+        env_config=env_config,
+        frame_stack=frame_stack,
+    )
     k_t, k_next = _obs_keys(obs_mode)
     obs_t = torch.from_numpy(data[k_t])
     obs_next = torch.from_numpy(data[k_next])
     action = torch.from_numpy(data["action"])
     n = obs_t.shape[0]
 
-    cfg = ModelConfig(obs_mode=obs_mode, latent_dim=latent_dim)
+    cfg = ModelConfig(
+        obs_mode=obs_mode,
+        latent_dim=latent_dim,
+        img_channels=2 * frame_stack if obs_mode == "image" else 2,
+    )
     model = JEPA(cfg)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     gen = torch.Generator().manual_seed(seed)
@@ -77,6 +96,7 @@ def train(
             obs_next[idx],
             var_weight=var_weight,
             cov_weight=cov_weight,
+            delta_var_weight=delta_var_weight,
         )
         opt.zero_grad()
         loss.backward()
@@ -98,6 +118,7 @@ def train(
         {
             "model_state": model.state_dict(),
             "config": asdict(cfg),
+            "env_config": asdict(env_config) if env_config is not None else None,
             "metrics": metrics,
         },
         checkpoint_path,
@@ -163,9 +184,16 @@ def main() -> None:
     p.add_argument("--horizon", type=int, default=50)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--checkpoint", default=CHECKPOINT_PATH)
+    p.add_argument(
+        "--env",
+        choices=["default", "swift"],
+        default="default",
+        help="environment preset; 'swift' has large per-step motion + non-linear drag",
+    )
     args = p.parse_args()
 
     train(
+        env_config=PointMassConfig.swift() if args.env == "swift" else None,
         obs_mode=args.obs_mode,
         latent_dim=args.latent_dim,
         steps=args.steps,

@@ -16,6 +16,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install CPU PyTorch
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -31,9 +33,10 @@ jobs:
       - name: Lint (ruff)
         run: ruff check oneiros tests
 
-      # The committed checkpoint (oneiros/checkpoint.pt) lets the inference and
-      # planning tests — including the three honesty gates — run without
+      # The committed checkpoints (oneiros/checkpoint.pt and
+      # oneiros/checkpoint_image.pt) let the inference and planning tests —
+      # including the vector honesty gates AND the pixel gates — run without
       # retraining, keeping CI fast and deterministic. Training itself is
       # exercised locally via `python -m oneiros.train`.
-      - name: Run tests (uses committed checkpoint)
+      - name: Run tests (uses committed checkpoints)
         run: pytest -q

@@ -27,7 +27,9 @@ CKPT = CHECKPOINT_PATH
 @pytest.fixture(scope="module")
 def model():
     if not os.path.exists(CKPT):
-        train(obs_mode="vector", steps=2000, verbose=False)
+        # Mirror the committed checkpoint's actual recipe so a fresh
+        # checkout regenerates an equivalent artifact, not a weaker one.
+        train(obs_mode="vector", steps=4000, verbose=False)
     return load_model(CKPT)
 
 
