@@ -180,6 +180,19 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--var-weight", type=float, default=25.0)
     p.add_argument("--cov-weight", type=float, default=1.0)
+    p.add_argument(
+        "--delta-var-weight",
+        type=float,
+        default=0.0,
+        help="temporal anti-collapse penalty; the committed image model uses 25.0",
+    )
+    p.add_argument(
+        "--frame-stack",
+        type=int,
+        choices=[1, 2],
+        default=1,
+        help="frames per image observation; the committed image model uses 2",
+    )
     p.add_argument("--n-episodes", type=int, default=200)
     p.add_argument("--horizon", type=int, default=50)
     p.add_argument("--seed", type=int, default=0)
@@ -201,10 +214,12 @@ def main() -> None:
         lr=args.lr,
         var_weight=args.var_weight,
         cov_weight=args.cov_weight,
+        delta_var_weight=args.delta_var_weight,
         n_episodes=args.n_episodes,
         horizon=args.horizon,
         seed=args.seed,
         checkpoint_path=args.checkpoint,
+        frame_stack=args.frame_stack,
     )
 
 

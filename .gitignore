@@ -19,6 +19,8 @@ htmlcov/
 
 # Large / scratch checkpoints (the small committed checkpoint.pt is kept on purpose)
 checkpoint_*.pt
+# ...but the committed image model is a documented deliverable, not scratch.
+!oneiros/checkpoint_image.pt
 *.ckpt
 scratch/
 scratch_*

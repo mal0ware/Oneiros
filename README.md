@@ -126,7 +126,7 @@ twice as fast as the pixel planner (median ~5 vs ~9.5 steps). Planning from
 pixels has not caught planning from privileged state, and gate (g) shows
 open-loop imagination degrading by horizon 12 — which is exactly why the
 planner replans every step. The baselines live in `oneiros/baselines.py`;
-reproduce with `python -m oneiros.train --obs-mode image --env swift`.
+reproduce with the image-training command under [Run](#run).
 
 ![Latent-MPC plan to goal](assets/planned_trajectory.gif)
 
@@ -177,9 +177,12 @@ pip install -e ".[dev]"
 # Train the JEPA world model (writes oneiros/checkpoint.pt). ~21s on CPU.
 python -m oneiros.train --obs-mode vector --steps 4000
 
-# Train the image world model on the swift environment (~3 min on CPU;
-# writes oneiros/checkpoint_image.pt when pointed there via --checkpoint).
-python -m oneiros.train --obs-mode image --env swift --steps 6000
+# Train the image world model on the swift environment (~3 min on CPU).
+# This is the exact recipe of the committed checkpoint: two-frame stacking,
+# the delta-variance penalty, and an explicit --checkpoint so the vector
+# model's default path is not clobbered.
+python -m oneiros.train --obs-mode image --env swift --steps 6000 \
+    --frame-stack 2 --delta-var-weight 25 --checkpoint oneiros/checkpoint_image.pt
 
 # Run the scripted agent: drive to the goal via latent MPC, write the GIF +
 # diagnostic plots to assets/.
@@ -197,8 +200,22 @@ ruff check oneiros tests
 The world model is exposed over MCP as a stdio server:
 
 ```bash
+# vector model (default)
 python -m oneiros.mcp_server
+
+# the committed image model: stacked-frame observations, swift environment
+python -m oneiros.mcp_server --obs-mode image
+
+# any other checkpoint
+python -m oneiros.mcp_server --checkpoint /path/to/checkpoint.pt
 ```
+
+`--obs-mode` selects which committed world model the server exposes. The
+environment tools serve observations in the loaded model's format — 6D
+vectors, or the stacked rendered frames the image model trains on — and
+`reset_env` returns a ready-made `goal_observation` for the planning tools.
+The served environment always uses the configuration the checkpoint was
+trained on (the swift preset for the image model).
 
 Tools:
 
@@ -226,7 +243,8 @@ To register the server with Claude Desktop, add this to
 }
 ```
 
-On Unix the `command` is `.venv/bin/python`.
+On Unix the `command` is `.venv/bin/python`. Append `"--obs-mode", "image"`
+to `args` to serve the committed image world model instead of the vector one.
 
 ## Repository layout
 
