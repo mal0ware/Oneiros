@@ -18,15 +18,47 @@ See the README for a ``claude_desktop_config.json`` snippet.
 from __future__ import annotations
 
 import argparse
+import functools
+import threading
+from importlib.metadata import PackageNotFoundError, version
 
 import numpy as np
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
+from . import __version__
 from .env import PointMass, PointMassConfig
 from .planner import LatentMPCPlanner, PlannerConfig
 from .train import CHECKPOINT_PATH, IMAGE_CHECKPOINT_PATH, load_model
 
-mcp = FastMCP("oneiros")
+
+def _server_version() -> str:
+    try:
+        return version("oneiros")
+    except PackageNotFoundError:  # imported from a source tree that was never installed
+        return __version__
+
+
+mcp = MCPServer("oneiros", version=_server_version())
+
+# mcp 2.x runs sync tools on worker threads, so overlapping requests run in
+# parallel. Everything a tool touches is shared: one planner whose numpy RNG
+# every plan draws from, the lazily built singletons below, and the session
+# environments. One lock serializes tool calls and configure(). That is the
+# order mcp 1.x ran them in (serially, on the event loop), so plans stay
+# reproducible, but the event loop is no longer blocked while a plan runs.
+_LOCK = threading.RLock()
+
+
+def _serialized(fn):
+    """Run a tool body while holding the server lock (see ``_LOCK``)."""
+
+    @functools.wraps(fn)
+    def locked(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+
+    return locked
+
 
 # Lazily constructed singletons so importing this module is cheap and does not
 # require a checkpoint to exist (the tool-list dump in CI must import cleanly).
@@ -56,11 +88,12 @@ def configure(obs_mode: str = "vector", checkpoint: str | None = None) -> str:
     path = checkpoint or (
         IMAGE_CHECKPOINT_PATH if obs_mode == "image" else CHECKPOINT_PATH
     )
-    _STATE["checkpoint_path"] = path
-    _STATE["model"] = None
-    _STATE["planner"] = None
-    _STATE["env_config"] = None
-    _ENVS.clear()
+    with _LOCK:  # waits for in-flight tool calls; none sees a half-reset server
+        _STATE["checkpoint_path"] = path
+        _STATE["model"] = None
+        _STATE["planner"] = None
+        _STATE["env_config"] = None
+        _ENVS.clear()
     return path
 
 
@@ -145,6 +178,7 @@ def _goal_obs(env: PointMass) -> list:
 
 
 @mcp.tool()
+@_serialized
 def encode_observation(observation: list) -> dict:
     """Encode an observation into a latent vector with the trained JEPA encoder.
 
@@ -165,6 +199,7 @@ def encode_observation(observation: list) -> dict:
 
 
 @mcp.tool()
+@_serialized
 def predict_rollout(latent: list[float], actions: list[list[float]]) -> dict:
     """Roll the learned latent dynamics forward from a latent over an action sequence.
 
@@ -185,6 +220,7 @@ def predict_rollout(latent: list[float], actions: list[list[float]]) -> dict:
 
 
 @mcp.tool()
+@_serialized
 def plan_to_goal(current_obs: list, goal_obs: list) -> dict:
     """Plan the next action that drives the agent toward a goal, via latent MPC.
 
@@ -202,6 +238,7 @@ def plan_to_goal(current_obs: list, goal_obs: list) -> dict:
 
 
 @mcp.tool()
+@_serialized
 def plan_trajectory(current_obs: list, goal_obs: list) -> dict:
     """Plan a full action sequence toward a goal and return the imagined plan.
 
@@ -237,6 +274,7 @@ def plan_trajectory(current_obs: list, goal_obs: list) -> dict:
 
 
 @mcp.tool()
+@_serialized
 def model_info() -> dict:
     """Describe the loaded world model: observation mode, dims, and metrics.
 
@@ -259,6 +297,7 @@ def model_info() -> dict:
 
 
 @mcp.tool()
+@_serialized
 def reset_env(seed: int = 0, session: str = "default") -> dict:
     """Reset the point-mass environment to a deterministic start for the given seed.
 
@@ -281,6 +320,7 @@ def reset_env(seed: int = 0, session: str = "default") -> dict:
 
 
 @mcp.tool()
+@_serialized
 def step_env(action: list[float], session: str = "default") -> dict:
     """Apply a 2D acceleration action to the environment and advance one timestep.
 

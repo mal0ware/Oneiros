@@ -13,7 +13,9 @@ authors = [{ name = "Marius Castillo" }]
 dependencies = [
     "torch>=2.2",
     "numpy>=1.26",
-    "mcp>=1.0",
+    # 2.x: MCPServer API; sync tools run on worker threads, so the server
+    # serializes tool calls itself (see oneiros/mcp_server.py).
+    "mcp>=2,<3",
     "pillow>=10.0",
     "imageio>=2.30",
     "matplotlib>=3.8",
